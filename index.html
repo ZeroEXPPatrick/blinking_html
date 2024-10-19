@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teachable Machine Pose + ESP32 WebSocket Control</title>
+</head>
+<body>
+    <h1>Teachable Machine Pose Model + ESP32 Control</h1>
+
+    <!-- Teachable Machine Pose Model Section -->
+    <div>Teachable Machine Pose Model</div>
+    
+    <!-- Camera selection dropdown -->
+    <label for="camera-select">Select Camera:</label>
+    <select id="camera-select"></select>
+
+    <!-- Start Pose Detection Button -->
+    <button type="button" onclick="init()">Start Pose Detection</button>
+
+    <!-- Probability Threshold Slider and Text Input -->
+    <div>
+        <label for="probability-slider">Set Probability Threshold: </label>
+        <input type="range" id="probability-slider" min="50" max="100" value="90" oninput="updateProbabilityText()" />
+        <input type="number" id="probability-input" min="50" max="100" value="90" oninput="updateProbabilitySlider()" />%
+    </div>
+
+    <div><canvas id="canvas"></canvas></div>
+    <div id="label-container"></div>
+    <div id="result"></div> <!-- Result div -->
+
+    <!-- ESP32 Control Section -->
+    <h2>Control ESP32 LED</h2>
+    <button onclick="sendMessage('a')">Blink LED</button>
+    <button onclick="sendMessage('b')">Turn LED Off</button>
+
+    <!-- TensorFlow and Teachable Machine scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+
+    <script>
+        // Teachable Machine Pose Model Setup
+        const URL = "https://teachablemachine.withgoogle.com/models/JYbDqDzxF/";
+        let model, webcam, ctx, labelContainer, maxPredictions;
+        let probabilityThreshold = 0.9; // Default threshold (90%)
+        let selectedCameraId = null;
+
+        // Request access to camera devices and populate camera select dropdown
+        async function getCameraDevices() {
+            try {
+                // Request user permission to access cameras
+                await navigator.mediaDevices.getUserMedia({ video: true });
+
+                // Get the list of available media devices
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                const cameraSelect = document.getElementById('camera-select');
+                cameraSelect.innerHTML = ''; // Clear previous options
+
+                // Populate the camera selection dropdown
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+
+                // Set the default selected camera
+                selectedCameraId = videoDevices.length > 0 ? videoDevices[0].deviceId : null;
+            } catch (error) {
+                console.error("Error accessing media devices:", error);
+            }
+        }
+
+        // Initialize the Teachable Machine model and start the webcam
+        async function init() {
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+
+            // Load the model and metadata
+            model = await tmPose.load(modelURL, metadataURL);
+            maxPredictions = model.getTotalClasses();
+
+            // Set up the webcam with the selected camera
+            const size = 200;
+            const flip = true; 
+            webcam = new tmPose.Webcam(size, size, flip);
+            await webcam.setup({ deviceId: selectedCameraId }); // Use the selected camera
+            await webcam.play();
+            window.requestAnimationFrame(loop);
+
+            // Set up canvas and labels
+            const canvas = document.getElementById("canvas");
+            canvas.width = size; canvas.height = size;
+            ctx = canvas.getContext("2d");
+            labelContainer = document.getElementById("label-container");
+            for (let i = 0; i < maxPredictions; i++) {
+                labelContainer.appendChild(document.createElement("div"));
+            }
+        }
+
+        // Loop to continuously predict poses
+        async function loop(timestamp) {
+            webcam.update(); 
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        // Predict the pose and classify the result
+        async function predict() {
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+            let highestProbability = 0;
+            let highestClass = null;
+
+            // Check which class has the highest probability above the threshold
+            for (let i = 0; i < maxPredictions; i++) {
+                const className = prediction[i].className;
+                const probability = prediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].innerHTML = className + ": " + probability;
+
+                // Only consider classes with probability > set threshold
+                if (probability > probabilityThreshold && probability > highestProbability) {
+                    highestProbability = probability;
+                    highestClass = className;
+                }
+            }
+
+            // Display and act based on the highest class prediction above the threshold
+            if (highestClass) {
+                document.getElementById("result").innerHTML = "Detected Class: " + highestClass;
+
+                // Send message based on the detected class
+                if (highestClass === "Class 1") {
+                    sendMessage('a');  // Send 'a' for Class 1
+                } else if (highestClass === "Class 2") {
+                    sendMessage('b');  // Send 'b' for Class 2
+                }
+            } else {
+                document.getElementById("result").innerHTML = "No valid pose detected above threshold";
+            }
+
+            drawPose(pose);
+        }
+
+        // Draw the pose on the canvas
+        function drawPose(pose) {
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
+            }
+        }
+
+        // WebSocket control for ESP32
+        var socket;
+        var reconnectInterval = 3000; 
+
+        function connectWebSocket() {
+            socket = new WebSocket('ws://192.168.0.214/ws');
+
+            socket.onopen = function () {
+                console.log("Connected to ESP32 WebSocket");
+            };
+
+            socket.onmessage = function (event) {
+                console.log("Message from ESP32: ", event.data);
+            };
+
+            socket.onclose = function () {
+                console.log("WebSocket closed. Trying to reconnect...");
+                setTimeout(connectWebSocket, reconnectInterval);
+            };
+
+            socket.onerror = function (error) {
+                console.log("WebSocket error: ", error);
+                socket.close();
+            };
+        }
+
+        // Function to send a message to the ESP32
+        function sendMessage(message) {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(message);
+                console.log("Message sent: " + message);
+            } else {
+                console.log("WebSocket is not open. Message not sent.");
+            }
+        }
+
+        // Function to update the slider based on text input
+        function updateProbabilitySlider() {
+            let value = document.getElementById('probability-input').value;
+            if (value >= 50 && value <= 100) {
+                document.getElementById('probability-slider').value = value;
+                probabilityThreshold = value / 100;
+            }
+        }
+
+        // Function to update the text input based on the slider
+        function updateProbabilityText() {
+            let value = document.getElementById('probability-slider').value;
+            document.getElementById('probability-input').value = value;
+            probabilityThreshold = value / 100;
+        }
+
+        // Initialize WebSocket connection on page load
+        connectWebSocket();
+
+        // Populate camera selection on page load
+        window.onload = function() {
+            getCameraDevices();
+        };
+
+        // Update the selected camera when a user selects a new one
+        document.getElementById('camera-select').onchange = function() {
+            selectedCameraId = this.value;
+        };
+    </script>
+</body>
+</html>
