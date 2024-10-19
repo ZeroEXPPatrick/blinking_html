@@ -10,24 +10,10 @@
 
     <!-- Teachable Machine Pose Model Section -->
     <div>Teachable Machine Pose Model</div>
-    
-    <!-- Camera selection dropdown -->
-    <label for="camera-select">Select Camera:</label>
-    <select id="camera-select"></select>
-
-    <!-- Start Pose Detection Button -->
     <button type="button" onclick="init()">Start Pose Detection</button>
-
-    <!-- Probability Threshold Slider and Text Input -->
-    <div>
-        <label for="probability-slider">Set Probability Threshold: </label>
-        <input type="range" id="probability-slider" min="50" max="100" value="90" oninput="updateProbabilityText()" />
-        <input type="number" id="probability-input" min="50" max="100" value="90" oninput="updateProbabilitySlider()" />%
-    </div>
-
     <div><canvas id="canvas"></canvas></div>
     <div id="label-container"></div>
-    <div id="result"></div> <!-- Result div -->
+    <div id="result"></div> <!-- New div to show result -->
 
     <!-- ESP32 Control Section -->
     <h2>Control ESP32 LED</h2>
@@ -42,27 +28,7 @@
         // Teachable Machine Pose Model Setup
         const URL = "https://teachablemachine.withgoogle.com/models/JYbDqDzxF/";
         let model, webcam, ctx, labelContainer, maxPredictions;
-        let probabilityThreshold = 0.9; // Default threshold (90%)
-        let selectedCameraId = null;
 
-        // Function to populate the camera selection dropdown
-        async function getCameraDevices() {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(device => device.kind === 'videoinput');
-            const cameraSelect = document.getElementById('camera-select');
-
-            videoDevices.forEach((device, index) => {
-                const option = document.createElement('option');
-                option.value = device.deviceId;
-                option.text = device.label || `Camera ${index + 1}`;
-                cameraSelect.appendChild(option);
-            });
-
-            // Set the default selected camera
-            selectedCameraId = videoDevices.length > 0 ? videoDevices[0].deviceId : null;
-        }
-
-        // Initialize the Teachable Machine model and start the webcam
         async function init() {
             const modelURL = URL + "model.json";
             const metadataURL = URL + "metadata.json";
@@ -71,11 +37,11 @@
             model = await tmPose.load(modelURL, metadataURL);
             maxPredictions = model.getTotalClasses();
 
-            // Set up the webcam with the selected camera
+            // Set up the webcam
             const size = 200;
             const flip = true; 
             webcam = new tmPose.Webcam(size, size, flip);
-            await webcam.setup({ deviceId: selectedCameraId }); // Use the selected camera
+            await webcam.setup();
             await webcam.play();
             window.requestAnimationFrame(loop);
 
@@ -89,34 +55,32 @@
             }
         }
 
-        // Loop to continuously predict poses
         async function loop(timestamp) {
             webcam.update(); 
             await predict();
             window.requestAnimationFrame(loop);
         }
 
-        // Predict the pose and classify the result
         async function predict() {
             const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
             const prediction = await model.predict(posenetOutput);
             let highestProbability = 0;
             let highestClass = null;
 
-            // Check which class has the highest probability above the threshold
+            // Check which class has the highest probability above 90%
             for (let i = 0; i < maxPredictions; i++) {
                 const className = prediction[i].className;
                 const probability = prediction[i].probability.toFixed(2);
                 labelContainer.childNodes[i].innerHTML = className + ": " + probability;
 
-                // Only consider classes with probability > set threshold
-                if (probability > probabilityThreshold && probability > highestProbability) {
+                // Only consider classes with probability > 0.9 (90%)
+                if (probability > 0.9 && probability > highestProbability) {
                     highestProbability = probability;
                     highestClass = className;
                 }
             }
 
-            // Display and act based on the highest class prediction above the threshold
+            // Display and act based on the highest class prediction above 90%
             if (highestClass) {
                 document.getElementById("result").innerHTML = "Detected Class: " + highestClass;
 
@@ -127,13 +91,12 @@
                     sendMessage('b');  // Send 'b' for Class 2
                 }
             } else {
-                document.getElementById("result").innerHTML = "No valid pose detected above threshold";
+                document.getElementById("result").innerHTML = "No valid pose detected above 90%";
             }
 
             drawPose(pose);
         }
 
-        // Draw the pose on the canvas
         function drawPose(pose) {
             if (webcam.canvas) {
                 ctx.drawImage(webcam.canvas, 0, 0);
@@ -181,34 +144,8 @@
             }
         }
 
-        // Function to update the slider based on text input
-        function updateProbabilitySlider() {
-            let value = document.getElementById('probability-input').value;
-            if (value >= 50 && value <= 100) {
-                document.getElementById('probability-slider').value = value;
-                probabilityThreshold = value / 100;
-            }
-        }
-
-        // Function to update the text input based on the slider
-        function updateProbabilityText() {
-            let value = document.getElementById('probability-slider').value;
-            document.getElementById('probability-input').value = value;
-            probabilityThreshold = value / 100;
-        }
-
         // Initialize WebSocket connection on page load
         connectWebSocket();
-
-        // Populate camera selection on page load
-        window.onload = function() {
-            getCameraDevices();
-        };
-
-        // Update the selected camera when a user selects a new one
-        document.getElementById('camera-select').onchange = function() {
-            selectedCameraId = this.value;
-        };
     </script>
 </body>
 </html>
