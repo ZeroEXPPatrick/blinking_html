@@ -45,31 +45,21 @@
         let probabilityThreshold = 0.9; // Default threshold (90%)
         let selectedCameraId = null;
 
-        // Request access to camera devices and populate camera select dropdown
+        // Function to populate the camera selection dropdown
         async function getCameraDevices() {
-            try {
-                // Request user permission to access cameras
-                await navigator.mediaDevices.getUserMedia({ video: true });
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            const cameraSelect = document.getElementById('camera-select');
 
-                // Get the list of available media devices
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                const cameraSelect = document.getElementById('camera-select');
-                cameraSelect.innerHTML = ''; // Clear previous options
+            videoDevices.forEach((device, index) => {
+                const option = document.createElement('option');
+                option.value = device.deviceId;
+                option.text = device.label || `Camera ${index + 1}`;
+                cameraSelect.appendChild(option);
+            });
 
-                // Populate the camera selection dropdown
-                videoDevices.forEach((device, index) => {
-                    const option = document.createElement('option');
-                    option.value = device.deviceId;
-                    option.text = device.label || `Camera ${index + 1}`;
-                    cameraSelect.appendChild(option);
-                });
-
-                // Set the default selected camera
-                selectedCameraId = videoDevices.length > 0 ? videoDevices[0].deviceId : null;
-            } catch (error) {
-                console.error("Error accessing media devices:", error);
-            }
+            // Set the default selected camera
+            selectedCameraId = videoDevices.length > 0 ? videoDevices[0].deviceId : null;
         }
 
         // Initialize the Teachable Machine model and start the webcam
